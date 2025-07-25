@@ -1,14 +1,14 @@
 
 const { Client, LocalAuth } = require('whatsapp-web.js');
-const qrcode = require('qrcode-terminal');
 const fs = require('fs');
+const qrcode = require('qrcode-terminal');
 
-// Archivos JSON
-const bienvenida = require('./data/bienvenida.json');
-const despedida = require('./data/despedida.json');
-const reglas = require('./data/reglas.json');
-const advertencias = require('./data/advertencias.json');
-const cumpleaños = require('./data/cumpleaños.json');
+// Cargar datos desde JSON
+const bienvenida = JSON.parse(fs.readFileSync('./data/bienvenida.json', 'utf8'));
+const despedida = JSON.parse(fs.readFileSync('./data/despedida.json', 'utf8'));
+const reglas = JSON.parse(fs.readFileSync('./data/reglas.json', 'utf8'));
+const advertencias = JSON.parse(fs.readFileSync('./data/advertencias.json', 'utf8'));
+const cumpleaños = JSON.parse(fs.readFileSync('./data/cumpleaños.json', 'utf8'));
 
 const client = new Client({
     authStrategy: new LocalAuth()
@@ -19,138 +19,121 @@ client.on('qr', (qr) => {
 });
 
 client.on('ready', () => {
-    console.log('✅ Bot listo');
+    console.log('🤖 Bot listo!');
 });
 
-// Bienvenida y despedida
-client.on('group_join', async (notification) => {
-    if (!bienvenida.activa) return;
-    const chat = await notification.getChat();
-    client.sendMessage(chat.id._serialized, bienvenida.mensaje);
-});
+function mentionUser(mention) {
+    return mention ? `@${mention.replace(/@c.us/, '')}` : '';
+}
 
-client.on('group_leave', async (notification) => {
-    if (!despedida.activa) return;
-    const chat = await notification.getChat();
-    client.sendMessage(chat.id._serialized, despedida.mensaje);
-});
+client.on('message', async msg => {
+    const chat = await msg.getChat();
+    const contact = await msg.getContact();
 
-// Comandos
-client.on('message', async (msg) => {
     if (!msg.body.startsWith('!')) return;
 
-    const args = msg.body.slice(1).trim().split(/ +/);
-    const command = args.shift().toLowerCase();
+    const args = msg.body.split(' ');
+    const command = args[0].toLowerCase();
+    const mention = msg.mentionedIds[0];
 
-    // 🌟 Comandos básicos
-    if (command === 'reglas') {
-        msg.reply(reglas.texto);
+    // 📌 COMANDOS DE ADMINISTRACIÓN
+    if (command === '!grupo') {
+        if (!chat.isGroup) return msg.reply('Este comando solo funciona en grupos.');
+        if (!chat.participants.find(p => p.id._serialized === contact.id._serialized)?.isAdmin)
+            return msg.reply('Solo los administradores pueden usar este comando.');
+
+        const action = args[1];
+        if (action === 'abrir') {
+            await chat.setMessagesAdminsOnly(false);
+            msg.reply('✅ El grupo ha sido abierto para todos.');
+        } else if (action === 'cerrar') {
+            await chat.setMessagesAdminsOnly(true);
+            msg.reply('🔒 El grupo ha sido cerrado para solo administradores.');
+        } else {
+            msg.reply('Uso: !grupo abrir / cerrar');
+        }
     }
 
-    else if (command === 'bienvenida') {
-        bienvenida.activa = !bienvenida.activa;
+    else if (command === '!setreglas') {
+        const nuevasReglas = msg.body.slice(10).trim();
+        reglas[chat.id._serialized] = nuevasReglas;
+        fs.writeFileSync('./data/reglas.json', JSON.stringify(reglas, null, 2));
+        msg.reply('✅ Reglas del grupo actualizadas.');
+    }
+
+    else if (command === '!reglas') {
+        const reglasGrupo = reglas[chat.id._serialized];
+        if (reglasGrupo) msg.reply(`📜 Reglas del grupo:
+${reglasGrupo}`);
+        else msg.reply('No se han establecido reglas aún.');
+    }
+
+    else if (command === '!setbienvenida') {
+        const bienvenidaTexto = msg.body.slice(15).trim();
+        bienvenida[chat.id._serialized] = bienvenidaTexto;
         fs.writeFileSync('./data/bienvenida.json', JSON.stringify(bienvenida, null, 2));
-        msg.reply(bienvenida.activa ? '✅ Bienvenida activada.' : '❌ Bienvenida desactivada.');
+        msg.reply('✅ Mensaje de bienvenida configurado.');
     }
 
-    else if (command === 'despedida') {
-        despedida.activa = !despedida.activa;
+    else if (command === '!bienvenida') {
+        const bienvenidaGrupo = bienvenida[chat.id._serialized];
+        if (bienvenidaGrupo) msg.reply(`👋 Mensaje de bienvenida:
+${bienvenidaGrupo}`);
+        else msg.reply('No se ha configurado la bienvenida aún.');
+    }
+
+    else if (command === '!setdespedida') {
+        const despedidaTexto = msg.body.slice(14).trim();
+        despedida[chat.id._serialized] = despedidaTexto;
         fs.writeFileSync('./data/despedida.json', JSON.stringify(despedida, null, 2));
-        msg.reply(despedida.activa ? '✅ Despedida activada.' : '❌ Despedida desactivada.');
+        msg.reply('✅ Mensaje de despedida configurado.');
     }
 
-    else if (command === 'advertir') {
-        if (!msg.hasQuotedMsg) return msg.reply('❌ Responde al mensaje de la persona que quieres advertir.');
-        const quoted = await msg.getQuotedMessage();
-        const id = quoted.author || quoted.from;
-        advertencias[id] = (advertencias[id] || 0) + 1;
+    else if (command === '!despedida') {
+        const despedidaGrupo = despedida[chat.id._serialized];
+        if (despedidaGrupo) msg.reply(`👋 Mensaje de despedida:
+${despedidaGrupo}`);
+        else msg.reply('No se ha configurado la despedida aún.');
+    }
+
+    else if (command === '!warn') {
+        const user = mention;
+        if (!user) return msg.reply('Debes mencionar a un usuario para advertir.');
+        advertencias[user] = (advertencias[user] || 0) + 1;
         fs.writeFileSync('./data/advertencias.json', JSON.stringify(advertencias, null, 2));
-        msg.reply(`⚠️ Advertencia guardada. Total: ${advertencias[id]}`);
+        msg.reply(`⚠️ Usuario advertido. Total de advertencias: ${advertencias[user]}`);
     }
 
-    else if (command === 'veradvertencias') {
-        let texto = '📄 Lista de advertencias:
-';
-        for (const id in advertencias) {
-            texto += `• ${id}: ${advertencias[id]} advertencias
-`;
-        }
-        msg.reply(texto);
+    else if (command === '!verwarn') {
+        const user = mention;
+        if (!user) return msg.reply('Debes mencionar a un usuario.');
+        const cantidad = advertencias[user] || 0;
+        msg.reply(`⚠️ ${mentionUser(user)} tiene ${cantidad} advertencias.`);
     }
 
-    else if (command === 'cumpleaños') {
-        if (args.length < 1) return msg.reply('📅 Usa: !cumpleaños 15/08');
-        cumpleaños[msg.from] = args[0];
-        fs.writeFileSync('./data/cumpleaños.json', JSON.stringify(cumpleaños, null, 2));
-        msg.reply(`🎉 Fecha de cumpleaños guardada: ${args[0]}`);
+    // 🎀 COMANDOS DE CARIÑO CON GIFS
+    else if (command === '!abrazo') {
+        if (mention) msg.reply(`🤗 Un abrazo para ${mentionUser(mention)} https://media.giphy.com/media/l2QDM9Jnim1YVILXa/giphy.gif`);
+        else msg.reply('🤗 ¡Aquí tienes un abrazo virtual! https://media.giphy.com/media/l2QDM9Jnim1YVILXa/giphy.gif');
     }
 
-    else if (command === 'vercumples') {
-        let texto = '🎂 Cumpleaños registrados:
-';
-        for (const id in cumpleaños) {
-            texto += `• ${id}: ${cumpleaños[id]}
-`;
-        }
-        msg.reply(texto);
+    else if (command === '!beso') {
+        if (mention) msg.reply(`😘 Un beso para ${mentionUser(mention)} https://media.giphy.com/media/l0MYt5jPR6QX5pnqM/giphy.gif`);
+        else msg.reply('😘 ¡Te mando un beso virtual! https://media.giphy.com/media/l0MYt5jPR6QX5pnqM/giphy.gif');
     }
 
-    // 🛠️ Comandos de administración
-    else if (command === 'ban' || command === 'kick') {
-        if (!msg.hasQuotedMsg) return msg.reply('❌ Debes responder al mensaje de la persona.');
-        const chat = await msg.getChat();
-        if (!chat.isGroup) return msg.reply('❌ Solo funciona en grupos.');
-        const quoted = await msg.getQuotedMessage();
-        try {
-            await chat.removeParticipants([quoted.author]);
-            msg.reply('✅ Usuario expulsado.');
-        } catch {
-            msg.reply('❌ No puedo expulsarlo.');
-        }
+    else if (command === '!apapacho') {
+        if (mention) msg.reply(`🫂 Un apapacho para ${mentionUser(mention)} 💖 https://media.giphy.com/media/3oz8xIsloV7zOmt81G/giphy.gif`);
+        else msg.reply('🫂 ¡Aquí tienes un apapacho especial! 💖 https://media.giphy.com/media/3oz8xIsloV7zOmt81G/giphy.gif');
     }
 
-    else if (command === 'tag') {
-        const chat = await msg.getChat();
-        if (!chat.isGroup) return msg.reply('❌ Solo en grupos.');
-        let texto = '📢 Etiquetando a todos:
-';
-        let mentions = [];
-        chat.participants.forEach(p => {
-            texto += `@${p.id.user} `;
-            mentions.push(p.id._serialized);
-        });
-        await chat.sendMessage(texto, { mentions });
+    else if (command === '!mimos') {
+        if (mention) msg.reply(`🐱 Mimos para ${mentionUser(mention)} 💆 https://media.giphy.com/media/KOVlHmbBA09XO/giphy.gif`);
+        else msg.reply('🐱 ¡Te mando mimos! 💆 https://media.giphy.com/media/KOVlHmbBA09XO/giphy.gif');
     }
 
-    // 🎮 Juegos
-    else if (command === 'pregunta') {
-        const respuestas = ['Sí', No', 'Tal vez', 'Claro', 'No lo creo'];
-        const r = respuestas[Math.floor(Math.random() * respuestas.length)];
-        msg.reply(`🔮 ${r}`);
-    }
-
-    else if (command === 'dado') {
-        const n = Math.floor(Math.random() * 6) + 1;
-        msg.reply(`🎲 Salió el número: ${n}`);
-    }
-
-    else if (command === 'caraocruz') {
-        const r = Math.random() < 0.5 ? 'Cara 🪙' : 'Cruz 🪙';
-        msg.reply(`Resultado: ${r}`);
-    }
-
-    // 💖 Comando de cariño (con gif)
-    else if (command === 'abrazo') {
-        msg.reply('🤗 Te mando un abrazo', null, {
-            media: await MessageMedia.fromUrl('https://media.tenor.com/o5HzWqgL_FgAAAAC/abrazo-anime.gif')
-        });
-    }
-
-    else if (command === 'beso') {
-        msg.reply('😘 Te doy un beso', null, {
-            media: await MessageMedia.fromUrl('https://media.tenor.com/Hk2r1hOZGc0AAAAC/kiss-anime.gif')
-        });
+    else if (command === '!tequiero') {
+        if (mention) msg.reply(`💗 ${mentionUser(mention)}, ¡te quiero mucho! https://media.giphy.com/media/fHtb1JPbfph72/giphy.gif`);
+        else msg.reply('💗 ¡Te quiero mucho! https://media.giphy.com/media/fHtb1JPbfph72/giphy.gif');
     }
 });
-
-client.initialize();
